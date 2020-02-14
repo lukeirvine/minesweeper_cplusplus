@@ -1,0 +1,82 @@
+# Use the official gcc image
+image: gitlab.cs.wallawalla.edu:5050/pridja/catch2-example:latest
+
+before_script:
+  # Install build dependencies
+#  - apt-get update && apt-get install -y gcc g++ make cmake clang-format-6.0 git-core
+
+stages:
+  - analysis
+  - build
+  - test
+  - coverage
+
+check_formatting:
+  stage: analysis
+  script:
+    - echo `which clang-format-6.0`
+    - ln -s `which clang-format-6.0` /usr/bin/clang-format
+    - echo $CI_PROJECT_DIR
+    - cd "$CI_PROJECT_DIR"
+    - linter_errors=$(git-clang-format-6.0 --commit "HEAD~1" -q --diff | grep -v --color=never "no modified files to format" || true)
+    - echo "$linter_errors"
+    - if [ ! -z "$linter_errors" ]; then echo "Detected formatting issues; please fix"; exit 1; else echo "Formatting is correct"; exit 0; fi
+
+run_cpplint:
+  stage: analysis
+  before_script:
+#    - apt-get update -y && apt-get install -y python-pip
+#    - python -m pip install cpplint
+  script:
+    - cd src
+    - find -name '*.h' -exec cpplint {} +
+    - find -name '*.cpp' -exec cpplint {} +
+
+run_cppcheck:
+  stage: analysis
+  script:
+    - find -name '*.h' -exec cppcheck --enable=all --suppress=missingIncludeSystem --language=c++ {} +
+    - find -name '*.cpp' -exec cppcheck --enable=all --suppress=missingIncludeSystem --language=c++ {} +
+
+build_programs:
+  stage: build
+  script:
+    - mkdir build
+    - cd build
+    - cmake ..
+    - make
+  artifacts:
+    paths:
+      - build/program
+    expire_in: 1 hour
+
+# function_tests:
+#   stage: test
+#   script:
+#     - build/tests
+
+code_coverage:
+  stage: coverage
+  script:
+    - mkdir -p build && cd build
+    - cmake .. -DGENERATE_CODE_COVERAGE=true
+    - make
+    - ./minesweeper_functions
+    - cd CMakeFiles/minesweeper_functions.dir
+    - mkdir -p cov
+    - find -name '*.o' -exec cp -t cov {} +
+    - find -name '*.gcno' -exec cp -t cov {} +
+    - find -name '*.gcda' -exec cp -t cov {} +
+    - cd cov || exit 1
+    - find -name '*.o' -exec gcov -bf {} \; > /dev/null
+    - lcov --quiet --capture --directory . --output-file coverage.info
+    - lcov --quiet --remove coverage.info "*include*" -o coverage.info
+    - lcov --list coverage.info
+    - echo "Generating HTML Report"
+    - genhtml coverage.info --output-directory out
+    - echo "You can download the report from the pipleine artifacts in gitlab for the next week"
+  artifacts:
+    paths:
+      - build/CMakeFiles/minesweeper_functions.dir/cov/out/
+    expire_in: 7 days
+
